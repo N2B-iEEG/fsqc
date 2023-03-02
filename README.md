@@ -5,7 +5,7 @@ A wave_clus-based algorithm for microwire quality inspection
 Approximately 5 min Neuralynx recording following the standard intracranial nomenclature (XXXu1, XXXu2, etc.) 
 
 ## How to use
-- Run 'fsqc.m'
+- Run `fsqc.m`
 - In the first pop-up window (directory selector), select the Neuralynx data directory that contains .ncs files used for quick spike detection (FSQC will automatically select non-empty microwire recordings for each bundle)
 - In the second pop-up window (patient name text box), enter patient ID ('TWH' is given by default)
 - Lay down and wait a few minutes
