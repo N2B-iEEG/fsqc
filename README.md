@@ -1,4 +1,4 @@
-# Fast Spike Quality Control (FSQC)
+# Fast Spike Quality Check (FSQC)
 A wave_clus-based algorithm for microwire quality inspection
 
 ## Input
