@@ -1,12 +1,13 @@
 clearvars, clc, close all
 addpath(genpath('wave_clus'))
+addpath(genpath('Nlx2Mat'))
 
 fsqc_path       = mfilename('fullpath');
 fsqc_path_parts = split(fsqc_path, {'/', '\'});
 fsqc_dir        = strjoin(fsqc_path_parts(1:end-1), '/');
 
 %% GUI inputs
-nlx_dir      = uigetdir([], 'Select Neuralynx data directory');
+nlx_dir    = uigetdir([], 'Select Neuralynx data directory');
 patient_id = inputdlg( ...
     'Enter patient ID (TWH***)', ...
     'Patient ID', ...
@@ -14,14 +15,49 @@ patient_id = inputdlg( ...
     {'TWH'});
 patient_id = char(patient_id);
 
-%% Find .ncs files
-nlx_micro_files = dir(fullfile(nlx_dir, ...
-    '*u*.ncs'));
-nlx_micro_files([nlx_micro_files.bytes] == 16384) = [];
-ncs_name_list = string({nlx_micro_files.name});
+%% Create result folder
+result_dir = fullfile(fsqc_dir, 'results', patient_id);
+mkdir(result_dir)
+cd(result_dir)
 
+%% Find .ncs files
+ncs_files = dir(fullfile(nlx_dir, ...
+    '*u*.ncs'));
+ncs_files([ncs_files.bytes] == 16384) = [];
+ncs_name_list = {ncs_files.name};
+ncs_path_list = fullfile(nlx_dir, ncs_name_list);
+
+%% Get recording length
+if isunix
+    nlx_time_stamp = ...
+        Nlx2MatCSC_v3(ncs_path_list{1}, [1 0 0 0 0], 0, 1, []);
+elseif ispc
+    nlx_time_stamp = ...
+        Nlx2MatCSC(   ncs_path_list{1}, [1 0 0 0 0], 0, 1, []);
+else
+    error(['MATLAB is unable to determine operating system \n' ...
+        'Nlx2Mat supports only Windows/Linux/MacOS \n'])
+end
+rec_length = length(nlx_time_stamp) * 520 / 32000;
+
+%% Detect spikes
+% wave_clus parameters
+par_input.detection = 'both';                 % Detection both pos and neg
+par_input.sr = 32000;                         % Sampling rate
+par_input.w_pre  = 1   * 1e-3 * par_input.sr; % Extract 1ms pre-spike data
+par_input.w_post = 1.5 * 1e-3 * par_input.sr; % Extract 1.5ms post-spike data
+
+fprintf([ ...
+    '==================================================\n' ...
+    '%s FAST SPIKE QUALITY CHECK\n' ...
+    'Spike detection using wave_clus\n\n'], ...
+    string(datetime))
+
+Get_spikes(ncs_path_list, 'par', par_input)
+
+%% Find bundles
 for i_ncs = 1:length(ncs_name_list)
-    ncs_name = ncs_name_list(i_ncs);
+    ncs_name = ncs_name_list{i_ncs};
     ncs_name_parts_u = strsplit(ncs_name, 'u');
     bd_name_list(i_ncs) = ncs_name_parts_u(1);
 end
@@ -29,61 +65,28 @@ end
 bd_unique = unique(bd_name_list);
 n_bd = length(bd_unique);
 
-%% Create result folder
-result_dir = fullfile(fsqc_dir, 'results', patient_id);
-mkdir(result_dir)
-cd(result_dir)
-
-%% Spike sorting for each bundle
-for i_bd = 1:n_bd
-    bd_name = bd_unique(i_bd);
-
-    % Find microwires of this bundle
-    wire_this_bd = dir(fullfile(nlx_dir, ...
-        strcat(bd_name, 'u*.ncs')));
-    wire_this_bd([wire_this_bd.bytes] == 16384) = [];
-    wire_this_bd_name = string({wire_this_bd.name}');
-    polytrode_lines = fullfile(nlx_dir, wire_this_bd_name);
-
-    % Create polytrode<i_bd>.txt for wave_clus
-    polytrode_file  = fullfile(result_dir, ...
-        strcat('polytrode', string(i_bd), '.txt'));
-    writelines(polytrode_lines, polytrode_file)
-
-    % Sampling rate
-    par_input.sr = 32000;
-    par_input.w_pre  = 1 * 1e-3 * par_input.sr; % 1ms
-    par_input.w_post = 2 * 1e-3 * par_input.sr; % 2ms
-
-    fprintf([ ...
-        '==================================================\n' ...
-        '%s FAST SPIKE QUALITY CHECK (FSQC)\n' ...
-        '[%s][%s] Spike detection\n\n'], ...
-        string(datetime), patient_id, bd_name)
-
-    Get_spikes_pol(i_bd, 'par', par_input) % Spike detection
-
-end
-
 %% Figure
+fprintf([ ...
+    '==================================================\n' ...
+    '%s FAST SPIKE QUALITY CHECK\n' ...
+    'Generating figure\n\n'], ...
+    string(datetime))
 
 fig = figure('units','normalized','position',[0 0 1 1]);
+times = linspace(-1, 1.5, par_input.w_pre + par_input.w_post);
 
 for i_bd = 1:n_bd
 
-    bd_name = bd_unique(i_bd);
+    bd_name = bd_unique{i_bd};
+    spike_info = dir(sprintf('%su*_spikes.mat', bd_name));
 
-    clearvars("index", "par", "spikes", "thr")
-    spike_info = dir(sprintf('polytrode%d_spikes.mat', i_bd));
-    spike_file = fullfile(spike_info.folder, spike_info.name);
-    load(spike_file)
-    spike_win = par.w_pre + par.w_post;
-
-    for i_wire = 1:par.channels
+    for i_wire = 1:length(spike_info)
         subplot(n_bd, 8, (i_bd-1)*8 + i_wire), hold on
 
-        data_range = spike_win * (i_wire-1) + 1 : spike_win * i_wire;
-        spike_shape_wire_all = spikes(:,data_range);
+        % Load spikes detected from the wire
+        wire_spike_file = fullfile(spike_info(i_wire).folder, spike_info(i_wire).name);
+        clearvars('spikes')
+        load(wire_spike_file, 'spikes')
         n_spike = size(spikes, 1);
 
         if n_spike <= 2000
@@ -92,22 +95,40 @@ for i_bd = 1:n_bd
             spike_to_plot = randperm(n_spike, 2000);
         end
 
-        ind_wf = plot(spike_shape_wire_all(spike_to_plot,:)', ...
-            'Color', '#FF4500', ...
-            'LineWidth', 0.2);
-        for i_line = 1:length(ind_wf)
-            ind_wf(i_line).Color(4) = 0.2;
+        if n_spike > 0
+            ind_wf = plot(times, spikes(spike_to_plot,:)', ...
+                'Color', '#25355A', ...
+                'LineWidth', 0.2);
+            for i_line = 1:length(ind_wf)
+                ind_wf(i_line).Color(4) = 0.1;
+            end
         end
 
-        title(sprintf('%su%d', bd_name, i_wire)) 
+        xline(0, '--', '', 'Color', 'k', 'Alpha', 0.3)
+
+        xlim([-1 1.5])
+        title(spike_info(i_wire).name(1:end-11), ...
+            sprintf('Avg. FR=%.2fHz', n_spike/rec_length), 'FontSize', 8)
+
+        if i_bd == n_bd
+            xticks(-1:0.5:1.5)
+        else
+            xticks([])
+            xticklabels({})
+        end
 
     end
 end
 
-figure_name = fullfile(result_dir, sprintf('%s_fsqc.jpg', patient_id));
+han = axes(fig,'visible','off');
+han.Title.Visible = 'on'; han.XLabel.Visible='on';
+xlabel(han, 'Time relative to spike (ms)');
+title(han, sprintf('%s FSQC', patient_id));
 
+%% Save figure
+figure_name = fullfile(result_dir, sprintf('%s_fsqc.jpg', patient_id));
 if exist('exportgraphics', 'file')
-    exportgraphics(fig, figure_name, "Resolution", 300);
+    exportgraphics(fig, figure_name, "Resolution", 200);
 else
     saveas(fig, figure_name)
 end
