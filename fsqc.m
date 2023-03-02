@@ -1,10 +1,12 @@
 clearvars, clc, close all
-addpath(genpath('wave_clus'))
-addpath(genpath('Nlx2Mat'))
 
 fsqc_path       = mfilename('fullpath');
 fsqc_path_parts = split(fsqc_path, {'/', '\'});
 fsqc_dir        = strjoin(fsqc_path_parts(1:end-1), '/');
+
+cd(fsqc_dir)
+addpath(genpath('wave_clus'))
+addpath(genpath('Nlx2Mat'))
 
 %% GUI inputs
 nlx_dir    = uigetdir([], 'Select Neuralynx data directory');
